@@ -1,0 +1,214 @@
+/* adc_matrix_test.c
+ * Simple wiring for modules/hallscan test on the adc_matrix_test keyboard.
+ *
+ * This file demonstrates:
+ *  - providing a keyboard-local `hallscan_config.h`
+ *  - registering a per-mux sensor->keycode table with `hallscan_map`
+ *  - simple simulated ADC hooks so the project compiles and the module
+ *    can be exercised without real hardware.
+ */
+
+#include "quantum.h"
+#include "timer.h"
+#include "hallscan/hallscan.h"
+#include "hallscan/hallscan_keymap.h"
+#include "analog.h"
+#include "wait.h"
+
+// We'll use bit-banged SPI so we don't depend on Pico SDK headers in QMK.
+// SPI pin names are defined in hallscan_config.h: SPI_SCK_PIN, SPI_MOSI_PIN,
+// SPI_MISO_PIN, SPI_CS_PIN
+
+
+/* Small simulated driver state so hallscan_scan_blocking() can be called in
+ * software-only builds. On real hardware, replace these with GPIO/ADC code
+ * that drives the HC4067 select pins and reads the ADCs.
+ */
+static volatile uint8_t s_current_select = 0;
+static volatile uint8_t s_current_mux = 0xFF;
+
+static void test_set_mux(uint8_t select_index) {
+	/* Drive S0..S3 lines according to select_index bits. */
+	uint8_t s = select_index & 0x0F;
+	writePin(MUX_S0_PIN, (s & 0x01) ? 1 : 0);
+	writePin(MUX_S1_PIN, (s & 0x02) ? 1 : 0);
+	writePin(MUX_S2_PIN, (s & 0x04) ? 1 : 0);
+	writePin(MUX_S3_PIN, (s & 0x08) ? 1 : 0);
+	s_current_select = s;
+}
+
+static void test_set_en(uint8_t mux_index, bool enabled) {
+	/* If per-mux EN pins are provided, drive them active-low when enabled. */
+	if (mux_index >= (uint8_t)HC4067_COUNT) return;
+	int pin = HALLSCAN_EN_PINS[mux_index];
+	if (pin == HALLSCAN_EN_PIN_UNUSED) {
+		/* No physical EN pin — treat the mux as implicitly enabled when
+		 * the module asks to enable it. This lets our simulated ADC know
+		 * which mux is active even when the EN line is tied or absent.
+		 */
+		if (enabled) {
+			s_current_mux = mux_index;
+		} else {
+			s_current_mux = 0xFF;
+		}
+		return;
+	}
+
+	if (enabled) {
+		writePinLow(pin); /* active low */
+		s_current_mux = mux_index;
+	} else {
+		writePinHigh(pin);
+		s_current_mux = 0xFF;
+	}
+}
+
+/* Simulated ADC: produce a high value when sensor index matches a simple
+ * pattern so you can see key events when running the firmware on hardware
+ * or in a simulator. This is purely for compile-time/testing convenience.
+ */
+/* internal ADC hook removed: this keyboard maps muxes to external ADC (MCP3208)
+ * and uses test_read_ext() above. If you later map a mux to an internal ADC,
+ * reintroduce a read_int implementation that returns analogReadPin(pin).
+ */
+
+static void test_delay_us(uint32_t us) {
+	/* Use millisecond wait for simplicity */
+	wait_ms((us + 999u) / 1000u);
+}
+
+//copied into hallscan_keymap.c
+static mux16_ref_t mux_maps_flat[HC4067_COUNT * 16u];
+
+/* Internal ADC read hook - reads RP2040 internal ADC */
+static uint16_t test_read_int(uint8_t adc_channel) {
+	switch (adc_channel) {
+		case 0: return analogReadPin(MUX1_ADC_PIN);
+		case 1: return analogReadPin(MUX2_ADC_PIN);
+		case 2: return analogReadPin(MUX3_ADC_PIN);
+		case 3: return analogReadPin(MUX4_ADC_PIN);
+		default: return 0;
+	}
+}
+
+/* External ADC read hook - for MCP3208 (mux 4, disabled for now) */
+static uint16_t test_read_ext(uint8_t channel) {
+	// Return mid-range for now (mux 4 disabled)
+	(void)channel;
+	return 2048;
+}
+
+void matrix_init_custom(void) {
+	/* QMK requires this for CUSTOM_MATRIX = lite */
+	uprintf("[INIT] matrix_init_custom called\n");
+}
+
+void keyboard_post_init_user(void) {
+	/* Initialize ADC pins - let QMK's analogReadPin handle pin mode */
+	
+	/* Prepare select pins as outputs and set initial state */
+	setPinOutput(MUX_S0_PIN);
+	setPinOutput(MUX_S1_PIN);
+	setPinOutput(MUX_S2_PIN);
+	setPinOutput(MUX_S3_PIN);
+	writePin(MUX_S0_PIN, 0);
+	writePin(MUX_S1_PIN, 0);
+	writePin(MUX_S2_PIN, 0);
+	writePin(MUX_S3_PIN, 0);
+
+	/* Prepare EN pins (if provided) and keep them disabled initially */
+	for (size_t i = 0; i < (size_t)HC4067_COUNT; ++i) {
+		int en = HALLSCAN_EN_PINS[i];
+		if (en == HALLSCAN_EN_PIN_UNUSED) continue;
+		setPinOutput(en);
+		writePinHigh(en); /* disable (active low) */
+	}
+
+	/* Initialize hallscan module with our hooks. Muxes 0-3 use internal ADC,
+	 * mux 4 uses external ADC (disabled for now).
+	 */
+	hallscan_init(test_set_mux, test_set_en, test_read_int, test_read_ext, test_delay_us);
+
+	/* Build a flat contiguous mux map from the per-mux tables and register it
+	 * so the module can safely copy (mux_count * 16) entries.
+	 */
+	for (size_t m = 0; m < (size_t)HC4067_COUNT; ++m) {
+		const mux16_ref_t *src = NULL;
+		switch (m) {
+			case 0: src = mux1_channels; break;
+			case 1: src = mux2_channels; break;
+			case 2: src = mux3_channels; break;
+			case 3: src = mux4_channels; break;
+			// case 4: src = mux5_channels; break;  // MUX5 disabled
+			default: src = NULL; break;
+		}
+		for (size_t s = 0; s < 16u; ++s) {
+			size_t idx = m * 16u + s;
+			if (src) mux_maps_flat[idx] = src[s];
+			else mux_maps_flat[idx].sensor = 0; /* unmapped channel */
+		}
+	}
+
+	hallscan_map_register_mux((const mux16_ref_t *)mux_maps_flat, (size_t)HC4067_COUNT);
+	/* Use moderate debounce to prevent chatter */
+	hallscan_map_set_debounce_ms(100u);
+
+	/* Show raw ADC values BEFORE calibration to diagnose hardware issues */
+	uprintf("[DEBUG] PRE-CALIB raw ADC test:\n");
+	hallscan_scan_blocking();
+	for (uint8_t m = 0; m < 4; m++) {
+		uprintf("  Mux%u: ", m);
+		for (uint8_t s = 0; s < 16; s += 4) {
+			uint16_t v = hallscan_get(m, s);
+			uprintf("[%u]=%u ", s, v);
+		}
+		uprintf("\n");
+	}
+	uprintf("[DEBUG] Expected values: 500-3000 for connected Hall sensors\n");
+	uprintf("[DEBUG] If values are <100 or >3900: check power/wiring\n");
+	
+	/* Calibrate baseline values for deviation-based sensing.
+	 * This will average 5 samples with 10ms delay to establish rest position.
+	 */
+	uprintf("[CALIB] Starting calibration (5 samples, 10ms delay)...\n");
+	uprintf("[CALIB] DO NOT TOUCH SENSORS during calibration!\n");
+	hallscan_map_calibrate(5, 10);
+	
+	/* Set sensitivity: percentage deviation from calibrated baseline.
+	 * SENSOR_THRESHOLD from hallscan_config.h (e.g., 10% means ±10% from baseline).
+	 */
+	hallscan_map_set_global_sensitivity_percent(SENSOR_THRESHOLD);
+	
+	uprintf("[CALIB] Calibration complete with %u%% deviation threshold\n", (unsigned)SENSOR_THRESHOLD);
+	uprintf("[READY] Keyboard ready! Press sensors to test.\n");
+}
+
+static uint32_t last_alive_msg = 0;
+
+bool matrix_scan_custom(matrix_row_t current_matrix[]) {
+	uint32_t now = timer_read32();
+	
+	/* Show that this function IS being called */
+	static uint32_t scan_count = 0;
+	scan_count++;
+	if (scan_count % 1000 == 0) {
+		uprintf("[MATRIX_SCAN] Called %lu times, scanning active\n", (unsigned long)scan_count);
+	}
+	
+	/* Show periodic "alive" message every 5 seconds */
+	if (now - last_alive_msg > 5000) {
+		uprintf("[SCAN] Matrix scanning active (debounce=%ums, threshold=%u%%)\n", 
+		        100u, (unsigned)SENSOR_THRESHOLD);
+		uprintf("[HARDWARE] ADC values TOO LOW (30-50)! Should be 500-3000!\n");
+		uprintf("[HARDWARE] Fix your hardware wiring before software will work!\n");
+		last_alive_msg = now;
+	}
+	
+	/* Perform a blocking hallscan, update internal sensor pressed state,
+	 * and then fill the provided matrix buffer so QMK/VIA see the events.
+	 */
+	hallscan_scan_blocking();
+	hallscan_map_process_once();
+	return hallscan_fill_matrix(current_matrix);
+}
+
