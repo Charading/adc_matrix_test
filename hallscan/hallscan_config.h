@@ -43,7 +43,11 @@ typedef enum sensor_names {
     S_LCTL, S_WIN, S_LALT, S_MO1, S_TG3, S_SPC1, S_SPC2, S_FN, S_RALT, S_LEFT, S_DOWN, S_RGHT,
 
     SENSOR_COUNT_PLUS_1,
+    SENSOR_UNMAPPED = 255
 } sensor_names_t;
+
+// Alias for compatibility
+typedef sensor_names_t sensor_id_t;
 
 #define SENSOR_COUNT (SENSOR_COUNT_PLUS_1 - 1)
 
@@ -112,17 +116,10 @@ static const int HALLSCAN_EN_PINS[HC4067_COUNT] = {
 #define SPI_CS_PIN    (17)
 #endif
 
-// Threshold: only values >= this will be considered active and printed
-#define HALLSCAN_DISPLAY_THRESHOLD  (200u)
+// Hall effect threshold - key is pressed when ADC is BELOW this value
+#define SENSOR_THRESHOLD 440
 
-// Sensor threshold: percentage deviation from calibrated baseline (1-100)
-// Keys are detected when ADC reading deviates by this percentage from baseline
-// Example: 30% means a key press is detected when reading is ±30% from baseline
-// NOTE: Set higher (30-40%) if you see false triggers from ADC noise
-#define SENSOR_THRESHOLD  (25u)  // 25% deviation required for key press
-
-// Timing (tunable)
-#define HALLSCAN_SETTLE_US     (200u) // microseconds to wait after changing mux selects
-#define HALLSCAN_SCAN_DELAY_MS (80u)  // ms between full scans
+// Debounce time in milliseconds
+#define DEBOUNCE_MS 50
 
 #endif // HALLSCAN_CONFIG_H
