@@ -1,15 +1,31 @@
-// HALLSCAN KEYMAP - MUX Channel to Sensor Mappings
-// This file defines which sensor is connected to which MUX channel
 
-#include "hallscan_config.h"
+#ifndef HALLSCAN_KEYMAP_H
+#define HALLSCAN_KEYMAP_H
 
-// ========================================
-// MUX CHANNEL MAPPINGS
-// ========================================
-// Each mux16_ref_t array maps 16 MUX channels (0-15) to sensor IDs
-// Use 0 for unmapped channels
+#include "hallscan.h"
+#include "quantum.h"
 
-// MUX 1 - Connected to MUX1_ADC_PIN
+
+// Board-level sensor name definitions and per-mux wiring
+//
+// This header is the board-editable surface for remapping sensors. It contains
+// two things you should edit to change which physical sensor corresponds to
+// which logical key:
+//
+// 1) The 1-based sensor name enum (S_...): provide human-readable names for
+//    physical sensors. These are 1-based identifiers (S_ESC = 1). Unused/empty
+//    sensors should remain absent from the enum - instead use the literal 0
+//    in the per-mux tables below to mark channels that are not connected.
+//
+// 2) The per-mux arrays (`muxX_channels`): each array is 16 entries (HC4067
+//    channels). Put the appropriate S_<NAME> identifier for each channel, or
+//    0 for unmapped channels. Keep one initializer per line for
+//    readability.
+
+
+// -------------------------------------
+// ----------     MUX 1     ------------
+// -------------------------------------
 const mux16_ref_t mux1_channels[16] = {
 	[0]  = { 0 },
 	[1]  = { 0 },
@@ -29,7 +45,9 @@ const mux16_ref_t mux1_channels[16] = {
 	[15] = { S_S },
 };
 
-// MUX 2 - Connected to MUX2_ADC_PIN
+// -------------------------------------
+// ----------     MUX 2     ------------
+// -------------------------------------
 const mux16_ref_t mux2_channels[16] = {
 	[0]  = { 0 },
 	[1]  = { 0 },
@@ -49,7 +67,9 @@ const mux16_ref_t mux2_channels[16] = {
 	[15] = { 0 },
 };
 
-// MUX 3 - Connected to MUX3_ADC_PIN
+// -------------------------------------
+// ----------     MUX 3     ------------
+// -------------------------------------
 const mux16_ref_t mux3_channels[16] = {
 	[0]  = { 0 },
 	[1]  = { 0 },
@@ -69,7 +89,9 @@ const mux16_ref_t mux3_channels[16] = {
 	[15] = { S_L },
 };
 
-// MUX 4 - Connected to MUX4_ADC_PIN
+// -------------------------------------
+// ----------     MUX 4     ------------
+// -------------------------------------
 const mux16_ref_t mux4_channels[16] = {
 	[0]  = { 0 },
 	[1]  = { 0 },
@@ -113,3 +135,5 @@ const mux16_ref_t mux5_channels[16] = {
 	[15] = { S_LALT },
 };
 */
+
+#endif // HALLSCAN_KEYMAP_H

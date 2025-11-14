@@ -5,4 +5,4 @@ CUSTOM_MATRIX = lite
 
 # SIMPLIFIED MUX ADC - Direct implementation like shego75_breadboard
 # No hallscan module dependency - everything in one file
-SRC += mux_adc_simple.c
+SRC += hallscan/hallscan.c
