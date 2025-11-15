@@ -24,11 +24,22 @@
 // SENSOR BEHAVIOR SETTINGS
 // ========================================
 
-// Hall effect threshold - key is pressed when ADC is BELOW this value
-#define SENSOR_THRESHOLD 440
+// SENSOR SETTINGS
+// SENSOR_THRESHOLD is interpreted as a percent when calibration is enabled.
+// e.g. SENSOR_THRESHOLD == 10 means a drop of 10% from baseline indicates a press.
+#define SENSOR_THRESHOLD 10
 
 // Debounce time in milliseconds
 #define DEBOUNCE_MS 50
+
+// Calibration settings
+// Number of raw ADC samples to average when calibrating each channel
+#define CALIBRATION_SAMPLES 8
+
+// Minimum ADC reading considered valid. Channels with values below this are
+// treated as floating/unconnected and ignored during calibration & scanning.
+#define ADC_MIN_VALID 200
+
 
 // Number of keys to track (should match your matrix size)
 #define MAX_KEYS 48  // 4 rows x 12 cols
@@ -63,5 +74,10 @@ typedef sensor_names_t sensor_id_t;
 typedef struct {
     sensor_id_t sensor;
 } mux16_ref_t;
+
+// Extern storage for per-sensor baselines and computed thresholds
+// Defined in hallscan.c
+extern uint16_t sensor_baseline[SENSOR_COUNT];
+extern uint16_t sensor_thresholds[SENSOR_COUNT];
 
 #endif // HALLSCAN_CONFIG_H

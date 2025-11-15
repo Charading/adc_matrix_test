@@ -30,14 +30,13 @@ static bool key_pressed[48];
 static uint32_t key_timer[48];
 static uint32_t last_debug_time = 0;
 
-// Sensor enum (1-based like shego)
+// Sensor enum (1-based to match hallscan_config.h)
 typedef enum {
-    S_ESC = 0, S_Q, S_W, S_E, S_R, S_T, S_Y, S_U, S_I, S_O, S_P, S_BSPC,
+    S_ESC = 1, S_Q, S_W, S_E, S_R, S_T, S_Y, S_U, S_I, S_O, S_P, S_BSPC,
     S_TAB, S_A, S_S, S_D, S_F, S_G, S_H, S_J, S_K, S_L, S_SCLN, S_ENT,
     S_LSFT, S_Z, S_X, S_C, S_V, S_B, S_N, S_M, S_COMM, S_DOT, S_UP, S_RSFT,
     S_LCTL, S_WIN, S_LALT, S_MO1, S_TG3, S_SPC1, S_SPC2, S_FN, S_RALT, S_LEFT, S_DOWN, S_RGHT,
-    SENSOR_COUNT,
-    SENSOR_UNMAPPED = 255
+    SENSOR_COUNT
 } sensor_id_t;
 
 // Sensor name strings for debug
@@ -113,24 +112,24 @@ static const mux16_ref_t mux3_channels[16] = {
     [15] = { S_RALT },
 };
 
-// MUX4 mappings (all unmapped for now)
+// MUX4 mappings (all unmapped for now; use 0 to indicate unmapped)
 static const mux16_ref_t mux4_channels[16] = {
-    [0]  = { SENSOR_UNMAPPED },
-    [1]  = { SENSOR_UNMAPPED },
-    [2]  = { SENSOR_UNMAPPED },
-    [3]  = { SENSOR_UNMAPPED },
-    [4]  = { SENSOR_UNMAPPED },
-    [5]  = { SENSOR_UNMAPPED },
-    [6]  = { SENSOR_UNMAPPED },
-    [7]  = { SENSOR_UNMAPPED },
-    [8]  = { SENSOR_UNMAPPED },
-    [9]  = { SENSOR_UNMAPPED },
-    [10] = { SENSOR_UNMAPPED },
-    [11] = { SENSOR_UNMAPPED },
-    [12] = { SENSOR_UNMAPPED },
-    [13] = { SENSOR_UNMAPPED },
-    [14] = { SENSOR_UNMAPPED },
-    [15] = { SENSOR_UNMAPPED },
+    [0]  = { 0 },
+    [1]  = { 0 },
+    [2]  = { 0 },
+    [3]  = { 0 },
+    [4]  = { 0 },
+    [5]  = { 0 },
+    [6]  = { 0 },
+    [7]  = { 0 },
+    [8]  = { 0 },
+    [9]  = { 0 },
+    [10] = { 0 },
+    [11] = { 0 },
+    [12] = { 0 },
+    [13] = { 0 },
+    [14] = { 0 },
+    [15] = { 0 },
 };
 
 static void select_mux_channel(uint8_t channel) {
@@ -195,29 +194,32 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
             // Get key mapping from the table
             const mux16_ref_t* key_mapping = &mux_tables[mux_idx][ch];
             
-            // Skip unmapped sensors
-            if (key_mapping->sensor == SENSOR_UNMAPPED || key_mapping->sensor >= SENSOR_COUNT) {
+            // Skip unmapped or out-of-range sensors (0 = unmapped)
+            if (key_mapping->sensor == 0 || key_mapping->sensor > SENSOR_COUNT) {
                 continue;
             }
             
             sensor_id_t sensor = key_mapping->sensor;
-            
-            // Convert sensor ID to matrix position (sensor is 0-based index into 4x12 matrix)
-            uint8_t matrix_row = sensor / MATRIX_COLS;
-            uint8_t matrix_col = sensor % MATRIX_COLS;
+
+            // Convert sensor ID to 0-based index (enum is 1-based)
+            uint8_t sensor_idx = sensor - 1;
+
+            // Convert sensor index to matrix position (0-based index into 4x12 matrix)
+            uint8_t matrix_row = sensor_idx / MATRIX_COLS;
+            uint8_t matrix_col = sensor_idx % MATRIX_COLS;
             
             // Check if this is within our 4x12 matrix
             if (matrix_row >= MATRIX_ROWS || matrix_col >= MATRIX_COLS) continue;
             
-            // Calculate key index for debounce tracking
-            uint8_t key_idx = sensor;  // Use sensor ID directly as index
+            // Calculate key index for debounce tracking (0-based)
+            uint8_t key_idx = sensor_idx;
             
             // KEY LOGIC: Key is pressed when ADC value is BELOW threshold
             bool should_press = (adc_val < SENSOR_THRESHOLD);
             
             if (debug_this_scan && mux_idx == 0 && ch < 4) {
-                uprintf("  MUX%d CH%d: %s ADC=%d %s\n", 
-                    mux_idx+1, ch, sensor_names[sensor], adc_val,
+                    uprintf("  MUX%d CH%d: %s ADC=%d %s\n", 
+                    mux_idx+1, ch, sensor_names[sensor_idx], adc_val,
                     should_press ? "PRESS" : "");
             }
             

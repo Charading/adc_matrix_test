@@ -2,7 +2,6 @@
 // Based on shego75_breadboard approach
 
 #include "hallscan.h"
-#include "hallscan_config.h"
 #include "quantum.h"
 #include "analog.h"
 #include "wait.h"
@@ -34,6 +33,10 @@ static const char *sensor_names[SENSOR_COUNT] = {
 
 #include "hallscan_keymap.h"
 
+// Per-sensor baseline and computed threshold (initialized at calibration)
+uint16_t sensor_baseline[SENSOR_COUNT];
+uint16_t sensor_thresholds[SENSOR_COUNT];
+
 // ========================================
 // HELPER FUNCTIONS
 // ========================================
@@ -44,6 +47,79 @@ static void select_mux_channel(uint8_t channel) {
     writePin(MUX_S2_PIN, (channel & 0x04) ? 1 : 0);
     writePin(MUX_S3_PIN, (channel & 0x08) ? 1 : 0);
     wait_us(100);
+}
+
+// Read and average several ADC samples from a pin
+static uint16_t sample_adc_for_pin(pin_t adc_pin) {
+    uint32_t sum = 0;
+    for (int i = 0; i < CALIBRATION_SAMPLES; ++i) {
+        sum += analogReadPin(adc_pin);
+        wait_us(500);
+    }
+    return (uint16_t)(sum / CALIBRATION_SAMPLES);
+}
+
+// Calibrate all mapped sensors: measure baseline and compute per-sensor threshold
+void hallscan_calibrate(void) {
+    uprintf("[HALLSCAN] Starting calibration (%d samples, %d%% threshold)\n", CALIBRATION_SAMPLES, SENSOR_THRESHOLD);
+
+    // Throttle debug output to roughly once per second (reuse same mechanism
+    // used by matrix_scan_custom)
+    uint32_t now = timer_read32();
+    bool debug_this_scan = (timer_elapsed32(last_debug_time) >= 1000);
+    if (debug_this_scan) last_debug_time = now;
+
+    pin_t adc_pins[4] = {MUX1_ADC_PIN, MUX2_ADC_PIN, MUX3_ADC_PIN, MUX4_ADC_PIN};
+    const mux16_ref_t* mux_tables[4] = {mux1_channels, mux2_channels, mux3_channels, mux4_channels};
+
+    // initialize arrays with safe defaults
+    for (int i = 0; i < SENSOR_COUNT; ++i) {
+        sensor_baseline[i] = 0;
+           // Default threshold 0 means "never pressed" until we calibrate a valid baseline
+           sensor_thresholds[i] = 0;
+    }
+
+    for (uint8_t mux_idx = 0; mux_idx < 4; ++mux_idx) {
+        for (uint8_t ch = 0; ch < 16; ++ch) {
+            select_mux_channel(ch);
+            wait_us(200);
+
+            const mux16_ref_t *m = &mux_tables[mux_idx][ch];
+            if (m->sensor == 0 || m->sensor > SENSOR_COUNT) continue;
+
+            uint8_t sidx = (uint8_t)(m->sensor - 1);
+            uint16_t sample = sample_adc_for_pin(adc_pins[mux_idx]);
+                // Ignore floating channels that read very low values
+                if (sample < ADC_MIN_VALID) {
+                    if (debug_this_scan) {
+                        uprintf("  MUX%d CH%d: sensor %d ignored (floating) sample=%u\n", mux_idx+1, ch, m->sensor, sample);
+                    }
+                    continue;
+                }
+            sensor_baseline[sidx] = sample;
+
+            // compute threshold as percentage below baseline
+            uint32_t thr = ((uint32_t)sensor_baseline[sidx] * (100 - (uint32_t)SENSOR_THRESHOLD)) / 100;
+            if (thr > 0xFFFF) thr = 0xFFFF;
+            sensor_thresholds[sidx] = (uint16_t)thr;
+
+            uprintf(" S%02d baseline=%u thr=%u\n", sidx, sensor_baseline[sidx], sensor_thresholds[sidx]);
+        }
+    }
+    uprintf("[HALLSCAN] Calibration complete\n");
+}
+
+// Accessor implementations
+uint16_t hallscan_get_baseline(sensor_id_t id) {
+    if (id == 0 || id > SENSOR_COUNT) return 0;
+    uint8_t idx = (uint8_t)(id - 1);
+    return sensor_baseline[idx];
+}
+
+uint16_t hallscan_get_threshold(sensor_id_t id) {
+    if (id == 0 || id > SENSOR_COUNT) return 0xFFFF;
+    uint8_t idx = (uint8_t)(id - 1);
+    return sensor_thresholds[idx];
 }
 
 void matrix_init_custom(void) {
@@ -66,6 +142,9 @@ void matrix_init_custom(void) {
     }
     
     uprintf("[HALLSCAN] Matrix initialized - 4 MUXes, %d sensors max\n", SENSOR_COUNT);
+
+    // Run calibration at init to populate per-sensor thresholds
+    hallscan_calibrate();
 }
 
 bool matrix_scan_custom(matrix_row_t current_matrix[]) {
@@ -100,8 +179,19 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
             // Get key mapping from the table
             const mux16_ref_t* key_mapping = &mux_tables[mux_idx][ch];
             
-            // Skip unmapped sensors
-            if (key_mapping->sensor == SENSOR_UNMAPPED || key_mapping->sensor >= SENSOR_COUNT) {
+            // Skip unmapped or out-of-range sensors
+            // - keymap uses 0 to represent "unmapped"
+            // - the enum values are 1-based (1..SENSOR_COUNT)
+            // Use `>` (not `>=`) because SENSOR_COUNT itself is a valid value.
+            if (key_mapping->sensor == 0 || key_mapping->sensor > SENSOR_COUNT) {
+                continue;
+            }
+
+            // Ignore floating channels / spurious low ADC readings
+            if (adc_val < ADC_MIN_VALID) {
+                if (debug_this_scan) {
+                    uprintf("  MUX%d CH%d: ADC=%u ignored (below %u)\n", mux_idx+1, ch, adc_val, (unsigned)ADC_MIN_VALID);
+                }
                 continue;
             }
             
@@ -120,8 +210,10 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
             // Calculate key index for debounce tracking (use 0-based index)
             uint8_t key_idx = sensor_idx;
             
-            // KEY LOGIC: Key is pressed when ADC value is BELOW threshold
-            bool should_press = (adc_val < SENSOR_THRESHOLD);
+            // KEY LOGIC: Key is pressed when ADC value is BELOW per-sensor threshold
+            // (SENSOR_THRESHOLD is interpreted as percent during calibration)
+            uint16_t thr = sensor_thresholds[sensor_idx];
+            bool should_press = (adc_val < thr);
             
             if (debug_this_scan && mux_idx == 0 && ch < 4) {
                 uprintf("  MUX%d CH%d: %s ADC=%d %s\n", 
