@@ -16,6 +16,8 @@
 static bool key_pressed[MAX_KEYS];
 static uint32_t key_timer[MAX_KEYS];
 static uint32_t last_debug_time = 0;
+// LED transistor cached state
+static bool led_state = false;
 
 // Sensor name strings for debug output
 static const char *sensor_names[SENSOR_COUNT] = {
@@ -128,6 +130,12 @@ void matrix_init_custom(void) {
     setPinOutput(MUX_S1_PIN);
     setPinOutput(MUX_S2_PIN);
     setPinOutput(MUX_S3_PIN);
+    // Setup LED transistor control pin (if defined per-board)
+#ifdef HALLSCAN_LED_PIN
+    setPinOutput(HALLSCAN_LED_PIN);
+    writePin(HALLSCAN_LED_PIN, 0);
+    led_state = false;
+#endif
     
     // Initialize ADC pins
     setPinInputHigh(MUX1_ADC_PIN);
@@ -147,6 +155,24 @@ void matrix_init_custom(void) {
     hallscan_calibrate();
 }
 
+// LED transistor control API
+void led__transistor_set(bool on) {
+    // If pin not configured, no-op
+#ifdef HALLSCAN_LED_PIN
+    setPinOutput(HALLSCAN_LED_PIN);
+    writePin(HALLSCAN_LED_PIN, on ? 1 : 0);
+    led_state = on;
+#endif
+}
+
+bool led__transistor_get(void) {
+    return led_state;
+}
+
+void led__transistor_toggle(void) {
+    led__transistor_set(!led_state);
+}
+
 bool matrix_scan_custom(matrix_row_t current_matrix[]) {
     bool changed = false;
     uint32_t now = timer_read32();
@@ -156,12 +182,6 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
         current_matrix[row] = 0;
     }
     
-    // Debug every 1 second
-    bool debug_this_scan = (timer_elapsed32(last_debug_time) >= 1000);
-    if (debug_this_scan) {
-        last_debug_time = now;
-        uprintf("[MUX_SCAN] Scanning...\n");
-    }
     
     // Array of ADC pins and MUX tables
     pin_t adc_pins[4] = {MUX1_ADC_PIN, MUX2_ADC_PIN, MUX3_ADC_PIN, MUX4_ADC_PIN};
@@ -188,13 +208,7 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
             }
 
             // Ignore floating channels / spurious low ADC readings
-            if (adc_val < ADC_MIN_VALID) {
-                if (debug_this_scan) {
-                    uprintf("  MUX%d CH%d: ADC=%u ignored (below %u)\n", mux_idx+1, ch, adc_val, (unsigned)ADC_MIN_VALID);
-                }
-                continue;
-            }
-            
+          
             sensor_id_t sensor = key_mapping->sensor;
             
             // Convert sensor ID to 0-based index (enum is 1-based: S_ESC=1, S_Q=2, etc.)
@@ -214,12 +228,6 @@ bool matrix_scan_custom(matrix_row_t current_matrix[]) {
             // (SENSOR_THRESHOLD is interpreted as percent during calibration)
             uint16_t thr = sensor_thresholds[sensor_idx];
             bool should_press = (adc_val < thr);
-            
-            if (debug_this_scan && mux_idx == 0 && ch < 4) {
-                uprintf("  MUX%d CH%d: %s ADC=%d %s\n", 
-                    mux_idx+1, ch, sensor_names[sensor_idx], adc_val,
-                    should_press ? "PRESS" : "");
-            }
             
             // Debounce check
             if (timer_elapsed32(key_timer[key_idx]) > DEBOUNCE_MS) {

@@ -20,6 +20,12 @@
 #define MUX3_ADC_PIN GP28  // ADC2
 #define MUX4_ADC_PIN GP29  // ADC3
 
+// LED transistor pin used to cut power to RGB LEDs.
+// Do NOT hardcode this here for module reuse. Define `HALLSCAN_LED_PIN` in
+// your keyboard's `config.h` or per-board header to the correct pin (for
+// example `#define HALLSCAN_LED_PIN GP8`). If it's not defined, the
+// hallscan module will no-op LED control.
+
 // ========================================
 // SENSOR BEHAVIOR SETTINGS
 // ========================================
